@@ -4,20 +4,29 @@ pub struct OrderData {
     pub owner: i32,
     pub order_type: OrderType,
     pub id: u64,
-    pub order_side: OrderSide,
 }
 
-#[derive(Debug)]
+pub struct Trade {
+    pub price: f32,
+    pub qty: u32,
+    pub buy_owner: i32,
+    pub sell_owner: i32,
+    pub trade_type: TradeType,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum OrderType {
     Limit,
     Market,
     Dark,
 }
 
-#[derive(PartialEq)]
-enum OrderSide {
-    Buy,
-    Sell{is_short: bool},
+
+#[derive(Debug, Clone, Copy)]
+pub enum TradeType {
+    BidInitiated,
+    AskInitiated,
+    MidPoint
 }
 
 impl OrderType {
@@ -39,7 +48,7 @@ impl OrderType {
 
 impl OrderData {
 
-    pub fn new(price: f32, quantity: u32, owner: i32, order_type: OrderType, id: u64, order_side: OrderSide) -> OrderData {
+    pub fn new(price: f32, quantity: u32, owner: i32, order_type: OrderType, id: u64) -> OrderData {
 
         if quantity <= 0 {
             panic!("Invalid  quantity")
@@ -53,8 +62,7 @@ impl OrderData {
                 quantity,
                 owner,
                 order_type,
-                id,
-                order_side
+                id
             }
         }
     }
@@ -79,7 +87,7 @@ impl OrderData {
         self.quantity = new_quantity;
     }
 
-    pub fn is_amend_qty_up(&mut self, new_quantity: u32) -> bool {
+    pub fn is_amend_qty_up(&self, new_quantity: u32) -> bool {
         self.quantity > new_quantity
     }
 
@@ -92,14 +100,14 @@ mod tests {
 
     #[test]
     fn order_construction() {
-        let mut order = OrderData::new(10.0, 1000, 1, OrderType::Limit, 1, OrderSide::Buy);
+        let mut order = OrderData::new(10.0, 1000, 1, OrderType::Limit, 1);
         assert_eq!(order.price,10.0);
 
-        order = OrderData::new(11.0, 100, 10, OrderType::Dark, 1, OrderSide::Buy);
+        order = OrderData::new(11.0, 100, 10, OrderType::Dark, 1);
         assert_eq!(order.price, 11.0);
         assert!(order.is_dark());
 
-        order = OrderData::new(11.0, 100, 10, OrderType::Market, 1, OrderSide::Buy);
+        order = OrderData::new(11.0, 100, 10, OrderType::Market, 1);
         assert_eq!(order.price, 11.0);
         assert!(order.is_market());
     }
@@ -107,12 +115,12 @@ mod tests {
     #[test]
     #[should_panic]
     fn invalid_price() {
-        let order = OrderData::new(-1.0, 100, 1, OrderType::Limit, 1, OrderSide::Buy) ;
+        let _order = OrderData::new(-1.0, 100, 1, OrderType::Limit, 1) ;
     }
 
     #[test]
     #[should_panic]
     fn invalid_qty() {
-        let order = OrderData::new(1.0, 0, 1, OrderType::Limit, 1, OrderSide::Buy);
+        let _order = OrderData::new(1.0, 0, 1, OrderType::Limit, 1);
     }
 }
