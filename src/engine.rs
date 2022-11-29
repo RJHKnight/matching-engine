@@ -22,7 +22,7 @@ impl LitEngine {
             security_id: security_id,
             bids: BTreeMultiMap::new(),
             asks: BTreeMultiMap::new(),
-            market_state: MarketState::PreOpen,
+            market_state: MarketState::Open,
             order_id: 0,
             id_to_price: HashMap::new(),
         }
@@ -107,7 +107,9 @@ impl LitEngine {
     }
 
     fn is_overlapping(&self) -> bool {
-        self.bids.iter().next().unwrap().0 >= self.asks.iter().next().unwrap().0
+        let bid_price = self.bids.iter().next_back().unwrap().0;
+        let ask_price = self.asks.iter().next().unwrap().0;
+        bid_price >= ask_price
     }
 
     fn get_trade(&mut self) -> Trade {
@@ -116,7 +118,7 @@ impl LitEngine {
     let trade;
 
     {
-        let buy_order = self.bids.iter().next().unwrap().1;
+        let buy_order = self.bids.iter().next_back().unwrap().1;
         let sell_order = self.asks.iter().next().unwrap().1;        
 
         trade_size = cmp::min(buy_order.quantity, sell_order.quantity);
@@ -274,6 +276,21 @@ mod tests {
         engine.create_order(11.0, 300, OrderSide::Sell { is_short: false }, 8, OrderType::Limit);
         engine.create_order(11.0, 400, OrderSide::Sell { is_short: false }, 9, OrderType::Limit);
         engine.create_order(12.0, 500, OrderSide::Sell { is_short: false }, 10, OrderType::Limit);
+
+        // Now cross spread
+        engine.create_order(11.0, 10, OrderSide::Buy, 11, OrderType::Limit);
+        let trades = engine.check();
+
+        assert!(trades.is_some());
+        let trades = trades.unwrap();
+
+        assert_eq!(1, trades.len());
+        let trade = trades.iter().next().unwrap();
+
+        assert_eq!(11.0, trade.price);
+        assert_eq!(10, trade.qty);
+        assert_eq!(11, trade.buy_owner);
+        assert_eq!(6, trade.sell_owner);
 
         
      }
