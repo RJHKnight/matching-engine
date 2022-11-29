@@ -78,7 +78,7 @@ impl LitEngine {
         }
     }
 
-    pub fn check(&self) -> Option<Vec<Trade>> {
+    pub fn check(&mut self) -> Option<Vec<Trade>> {
 
         match self.market_state {
             
@@ -97,11 +97,7 @@ impl LitEngine {
                 while self.is_overlapping() {
     
                     trades.push(self.get_trade());
-
-                    // trades.push(Trade{price: 10.0, qty: 10, is_full: true, buy_owner: 1, sell_owner: 1, trade_type: TradeType::AskInitiated });
                 }
-
-                
                 
                 Some(trades)
             },
@@ -116,16 +112,20 @@ impl LitEngine {
 
     fn get_trade(&mut self) -> Trade {
 
-        let buy_order = self.bids.iter_mut().next().unwrap().1;
-        let sell_order = self.asks.iter_mut().next().unwrap().1;
+    let (buy_qty, sell_qty, buy_id, sell_id, trade_size);
+    let trade;
 
-        let trade_size = cmp::min(buy_order.quantity, sell_order.quantity);
+    {
+        let buy_order = self.bids.iter().next().unwrap().1;
+        let sell_order = self.asks.iter().next().unwrap().1;        
+
+        trade_size = cmp::min(buy_order.quantity, sell_order.quantity);
 
         if !(buy_order.price == sell_order.price) {
             panic!("Matching with invalid prices! - buy: {}, sell: {}", buy_order.price, sell_order.price)
         }
 
-        let trade = Trade{
+        trade = Trade{
              price: buy_order.price,
              qty: trade_size,
              buy_owner: buy_order.owner,
@@ -133,27 +133,34 @@ impl LitEngine {
              trade_type: TradeType::MidPoint
         };
 
-        // Adjust orders - at least one side is always fully filled
-        // if buy_order.quantity == trade_size {
-        //     cancel_order_int(&mut self.bids, &mut self.id_to_price, buy_order.id);
-        // } 
-        // if sell_order.quantity == trade_size {
-        //     cancel_order_int(&mut self.asks, &mut self.id_to_price, sell_order.id);
-        // }
+        buy_id = buy_order.id;
+        sell_id = sell_order.id;
+        buy_qty = buy_order.quantity;
+        sell_qty = sell_order.quantity;
+    }
 
-        // if buy_order.quantity != sell_order.quantity {
-        //     let amend_buy = buy_order.quantity > sell_order.quantity;
-        //     let order_to_amend = if amend_buy { buy_order } else { sell_order };
-        //     let new_qty = order_to_amend.quantity - trade_size;
-        //     self.amend_order_quantity(order_to_amend.id, new_qty, amend_buy);
-        // } 
+    // Adjust orders - at least one side is always fully filled
+    if buy_qty == trade_size {
+        cancel_order_int(&mut self.bids, &mut self.id_to_price, buy_id);
+    } 
+    if sell_qty == trade_size {
+        cancel_order_int(&mut self.asks, &mut self.id_to_price, sell_id);
+    }
 
-        trade
-        }
-        
-        pub fn print_book(&self) {
+    if buy_qty != sell_qty {
+        let amend_buy = buy_qty > sell_qty;
+        let amend_qty = if amend_buy { buy_qty } else { sell_qty};
+        let order_to_amend = if amend_buy { buy_id } else { sell_id };
+        let new_qty = amend_qty - trade_size;
+        self.amend_order_quantity(order_to_amend, new_qty, amend_buy);
+    } 
+
+    trade
+    }
     
-        }
+    pub fn print_book(&self) {
+
+    }
 
      }
 
