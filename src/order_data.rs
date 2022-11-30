@@ -22,11 +22,12 @@ pub enum OrderType {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TradeType {
     BidInitiated,
     AskInitiated,
-    MidPoint
+    MidPoint,
+    Auction
 }
 
 impl OrderType {

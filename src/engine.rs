@@ -34,11 +34,15 @@ impl LitEngine {
         cur_id
     }
 
-    pub fn create_order(&mut self, price: f32, quantity: u32, side: OrderSide, owner: i32, order_type: OrderType) -> u64 {
+    pub fn create_order(&mut self, price: f32, quantity: u32, side: OrderSide, owner: i32, order_type: OrderType) -> (u64, Option<Vec<Trade>>) {
         
         let new_order_id = self.get_and_increment_id();
         let book_side = if side == OrderSide::Buy { &mut self.bids} else {&mut self.asks};
-        create_order_int(book_side, &mut self.id_to_price, price, quantity, owner, order_type, new_order_id)
+        let id = create_order_int(book_side, &mut self.id_to_price, price, quantity, owner, order_type, new_order_id);
+        let trade_type = if side == OrderSide::Buy { TradeType::BidInitiated} else { TradeType::AskInitiated};
+        let trades = self.check(trade_type);
+
+        (id, trades)
     }
 
     pub fn cancel_order(&mut self, id: u64, is_buy: bool) {
@@ -78,7 +82,7 @@ impl LitEngine {
         }
     }
 
-    pub fn check(&mut self) -> Option<Vec<Trade>> {
+    pub fn check(&mut self, trade_type :TradeType) -> Option<Vec<Trade>> {
 
         match self.market_state {
             
@@ -96,7 +100,7 @@ impl LitEngine {
 
                 while self.is_overlapping() {
     
-                    trades.push(self.get_trade());
+                    trades.push(self.get_trade(trade_type));
                 }
                 
                 Some(trades)
@@ -107,12 +111,18 @@ impl LitEngine {
     }
 
     fn is_overlapping(&self) -> bool {
-        let bid_price = self.bids.iter().next_back().unwrap().0;
-        let ask_price = self.asks.iter().next().unwrap().0;
-        bid_price >= ask_price
+
+        let bid_price = self.bids.iter().next_back();
+        let ask_price = self.asks.iter().next();
+
+        if bid_price.is_none() || ask_price.is_none() {
+            return false;
+        }
+
+        bid_price.unwrap().0 >= ask_price.unwrap().0
     }
 
-    fn get_trade(&mut self) -> Trade {
+    fn get_trade(&mut self, trade_type : TradeType) -> Trade {
 
     let (buy_qty, sell_qty, buy_id, sell_id, trade_size);
     let trade;
@@ -123,16 +133,18 @@ impl LitEngine {
 
         trade_size = cmp::min(buy_order.quantity, sell_order.quantity);
 
-        if !(buy_order.price == sell_order.price) {
+        if !(buy_order.price >= sell_order.price) {
             panic!("Matching with invalid prices! - buy: {}, sell: {}", buy_order.price, sell_order.price)
         }
 
+        let trade_price = if trade_type == TradeType::BidInitiated { sell_order.price} else { buy_order.price};
+
         trade = Trade{
-             price: buy_order.price,
+             price: trade_price,
              qty: trade_size,
              buy_owner: buy_order.owner,
              sell_owner: sell_order.owner,
-             trade_type: TradeType::MidPoint
+             trade_type: trade_type
         };
 
         buy_id = buy_order.id;
@@ -198,6 +210,8 @@ fn create_order_int(book_side : &mut BTreeMultiMap<i32, OrderData>, id_to_price:
 fn to_int_price(price: f32) -> i32 {
     floor(price as f64 / 0.01, 0) as i32
 }
+
+
 
 enum MarketState {
     PreOpen,
@@ -278,8 +292,7 @@ mod tests {
         engine.create_order(12.0, 500, OrderSide::Sell { is_short: false }, 10, OrderType::Limit);
 
         // Now cross spread
-        engine.create_order(11.0, 10, OrderSide::Buy, 11, OrderType::Limit);
-        let trades = engine.check();
+        let (_id, trades) = engine.create_order(11.0, 10, OrderSide::Buy, 11, OrderType::Limit);
 
         assert!(trades.is_some());
         let trades = trades.unwrap();
@@ -294,6 +307,31 @@ mod tests {
 
         
      }
+
+     #[test]
+     fn test_aggressive_order() {
+        let mut engine = LitEngine::new(1);
+
+        // Place some orders
+        engine.create_order(10.0, 100, OrderSide::Buy, 1, OrderType::Limit);        
+        engine.create_order(11.0, 100, OrderSide::Sell { is_short: false }, 6, OrderType::Limit);
+
+        // Now cross spread - priced lower than best bid
+        let (_id, trades) = engine.create_order(9.0, 10, OrderSide::Sell{is_short: false}, 3, OrderType::Limit);
+
+        // Should fill at best bid price.
+        assert!(trades.is_some());
+        let trades = trades.unwrap();
+
+        assert_eq!(1, trades.len());
+        let trade = trades.iter().next().unwrap();
+
+        assert_eq!(10.0, trade.price);
+        assert_eq!(10, trade.qty);
+        assert_eq!(1, trade.buy_owner);
+        assert_eq!(3, trade.sell_owner);
+     }
+
 
 
 }
