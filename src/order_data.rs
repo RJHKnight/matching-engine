@@ -6,6 +6,7 @@ pub struct OrderData {
     pub id: u64,
 }
 
+#[derive(Debug)]
 pub struct Trade {
     pub price: f32,
     pub qty: u32,

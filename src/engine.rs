@@ -37,8 +37,9 @@ impl LitEngine {
     pub fn create_order(&mut self, price: f32, quantity: u32, side: OrderSide, owner: i32, order_type: OrderType) -> (u64, Option<Vec<Trade>>) {
         
         let new_order_id = self.get_and_increment_id();
-        let book_side = if side == OrderSide::Buy { &mut self.bids} else {&mut self.asks};
-        let id = create_order_int(book_side, &mut self.id_to_price, price, quantity, owner, order_type, new_order_id);
+        let is_buy = side == OrderSide::Buy;
+
+        let id = self.create_order_int(is_buy, price, quantity, owner, order_type, new_order_id);
         let trade_type = if side == OrderSide::Buy { TradeType::BidInitiated} else { TradeType::AskInitiated};
         let trades = self.check(trade_type);
 
@@ -47,8 +48,7 @@ impl LitEngine {
 
     pub fn cancel_order(&mut self, id: u64, is_buy: bool) {
 
-        let book_side = if is_buy { &mut self.bids} else {&mut self.asks};
-        cancel_order_int(book_side, &mut self.id_to_price, id)
+        self.cancel_order_int(is_buy, id);
     }
 
     pub fn amend_order_price(&mut self, id: u64, new_price: f32, is_buy: bool) {
@@ -63,23 +63,35 @@ impl LitEngine {
 
     pub fn amend_order_quantity(&mut self, id: u64, new_quantity: u32, is_buy: bool) {
         
-        let price = self.id_to_price.get(&id).unwrap();
-        let book_side = if is_buy {&mut self.bids} else {&mut self.asks};
-        let orders_at_price = book_side.get_vec(price).unwrap();
-        let order = orders_at_price.iter().find(|o| o.matches_id(id)).unwrap();
+        let order_details = self.get_order_details(id, is_buy);
 
         // Need to cancel, new for upward quantity amend
-        if order.is_amend_qty_up(new_quantity) {
+        if new_quantity > order_details.0 {
 
-            create_order_int(book_side, &mut self.id_to_price, order.price, order.quantity, order.owner, order.order_type, order.id);
-            cancel_order_int(book_side, &mut self.id_to_price, id);
+            self.create_order_int(is_buy, order_details.1, order_details.0, 
+                order_details.2, order_details.3, order_details.4);
+
+            self.cancel_order_int(is_buy, id);
             
         }
         else {
+
+            let book_side = if is_buy { &mut self.bids} else {&mut self.asks};
+            let price = self.id_to_price.get(&id).unwrap();
             let orders_at_price = book_side.get_vec_mut(price).unwrap();
             let order = orders_at_price.iter_mut().find(|o| o.matches_id(id)).unwrap();
             order.amend_order_quantity(new_quantity);
         }
+    }
+
+    fn get_order_details(&mut self, id: u64, is_buy: bool) -> (u32, f32, i32, OrderType, u64) {
+
+        let book_side = if is_buy { &self.bids} else {&self.asks};
+        let price = self.id_to_price.get(&id).unwrap();
+        let orders_at_price = book_side.get_vec(price).unwrap();
+        let order = orders_at_price.iter().find(|o| o.matches_id(id)).unwrap();
+
+        (order.quantity, order.price, order.owner, order.order_type, order.id)
     }
 
     pub fn check(&mut self, trade_type :TradeType) -> Option<Vec<Trade>> {
@@ -128,8 +140,11 @@ impl LitEngine {
     let trade;
 
     {
-        let buy_order = self.bids.iter().next_back().unwrap().1;
-        let sell_order = self.asks.iter().next().unwrap().1;        
+        let buy_price = self.bids.iter().next_back().unwrap().0;
+        let sell_price = self.asks.iter().next().unwrap().0;
+        
+        let buy_order = self.bids.get(buy_price).unwrap();
+        let sell_order = self.asks.get(sell_price).unwrap();
 
         trade_size = cmp::min(buy_order.quantity, sell_order.quantity);
 
@@ -155,10 +170,10 @@ impl LitEngine {
 
     // Adjust orders - at least one side is always fully filled
     if buy_qty == trade_size {
-        cancel_order_int(&mut self.bids, &mut self.id_to_price, buy_id);
+        self.cancel_order_int(true, buy_id);
     } 
     if sell_qty == trade_size {
-        cancel_order_int(&mut self.asks, &mut self.id_to_price, sell_id);
+        self.cancel_order_int(false, sell_id);
     }
 
     if buy_qty != sell_qty {
@@ -169,48 +184,49 @@ impl LitEngine {
         self.amend_order_quantity(order_to_amend, new_qty, amend_buy);
     } 
 
+    dbg!(&trade);
+
     trade
     }
     
     pub fn print_book(&self) {
 
     }
-
-     }
-
-
-fn cancel_order_int(book_side : &mut BTreeMultiMap<i32, OrderData>, id_to_price: &mut HashMap<u64, i32>, id: u64) {
-        
-    let price = id_to_price.get(&id).unwrap();
-    let orders_at_price = book_side.get_vec_mut(price).unwrap();
-    orders_at_price.retain(|o| !o.matches_id(id));
-
-    // Clean up id mapping.
-    id_to_price.remove(&id);
-}
-
-fn create_order_int(book_side : &mut BTreeMultiMap<i32, OrderData>, id_to_price: &mut HashMap<u64, i32>, 
-    price: f32, quantity: u32, owner: i32, order_type: OrderType, order_id: u64) -> u64 {
-
-    if order_type.is_dark() {
-        panic!("Dark order sent to lit engine.")
+    
+    fn cancel_order_int(&mut self, is_buy: bool, id: u64) {
+            
+        let book_side = if is_buy { &mut self.bids} else {&mut self.asks};
+        let price = self.id_to_price.get(&id).unwrap();
+        let orders_at_price = book_side.get_vec_mut(price).unwrap();
+        orders_at_price.retain(|o| !o.matches_id(id));
+    
+        // Clean up id mapping.
+        self.id_to_price.remove(&id);
     }
-
-    let state = OrderData::new(price, quantity, owner, order_type, order_id);
-
-    let int_price = to_int_price(price);
-    book_side.insert(int_price, state);
-
-    // Update our mapping of id to price.
-    id_to_price.insert(order_id, int_price);
-
-    order_id
-}
+    
+    fn create_order_int(&mut self, is_buy: bool, price: f32, quantity: u32, 
+        owner: i32, order_type: OrderType, order_id: u64) -> u64 {
+    
+        let book_side = if is_buy { &mut self.bids} else {&mut self.asks};
+        if order_type.is_dark() {
+            panic!("Dark order sent to lit engine.")
+        }
+    
+        let state = OrderData::new(price, quantity, owner, order_type, order_id);
+    
+        let int_price = to_int_price(price);
+        book_side.insert(int_price, state);
+    
+        // Update our mapping of id to price.
+        self.id_to_price.insert(order_id, int_price);
+    
+        order_id
+    }
+    }
 
 fn to_int_price(price: f32) -> i32 {
     floor(price as f64 / 0.01, 0) as i32
 }
-
 
 
 enum MarketState {
@@ -224,7 +240,7 @@ enum MarketState {
 #[derive(PartialEq)]
 pub enum OrderSide {
     Buy,
-    Sell{is_short: bool},
+    Sell,
 }
 
 #[cfg(test)]
@@ -285,11 +301,11 @@ mod tests {
         engine.create_order(10.0, 400, OrderSide::Buy, 4, OrderType::Limit);
         engine.create_order(9.0, 500, OrderSide::Buy, 5, OrderType::Limit);
         
-        engine.create_order(11.0, 100, OrderSide::Sell { is_short: false }, 6, OrderType::Limit);
-        engine.create_order(11.0, 200, OrderSide::Sell { is_short: false }, 7, OrderType::Limit);
-        engine.create_order(11.0, 300, OrderSide::Sell { is_short: false }, 8, OrderType::Limit);
-        engine.create_order(11.0, 400, OrderSide::Sell { is_short: false }, 9, OrderType::Limit);
-        engine.create_order(12.0, 500, OrderSide::Sell { is_short: false }, 10, OrderType::Limit);
+        engine.create_order(11.0, 100, OrderSide::Sell, 6, OrderType::Limit);
+        engine.create_order(11.0, 200, OrderSide::Sell, 7, OrderType::Limit);
+        engine.create_order(11.0, 300, OrderSide::Sell, 8, OrderType::Limit);
+        engine.create_order(11.0, 400, OrderSide::Sell, 9, OrderType::Limit);
+        engine.create_order(12.0, 500, OrderSide::Sell, 10, OrderType::Limit);
 
         // Now cross spread
         let (_id, trades) = engine.create_order(11.0, 10, OrderSide::Buy, 11, OrderType::Limit);
@@ -314,10 +330,10 @@ mod tests {
 
         // Place some orders
         engine.create_order(10.0, 100, OrderSide::Buy, 1, OrderType::Limit);        
-        engine.create_order(11.0, 100, OrderSide::Sell { is_short: false }, 6, OrderType::Limit);
+        engine.create_order(11.0, 100, OrderSide::Sell , 6, OrderType::Limit);
 
         // Now cross spread - priced lower than best bid
-        let (_id, trades) = engine.create_order(9.0, 10, OrderSide::Sell{is_short: false}, 3, OrderType::Limit);
+        let (_id, trades) = engine.create_order(9.0, 10, OrderSide::Sell, 3, OrderType::Limit);
 
         // Should fill at best bid price.
         assert!(trades.is_some());
@@ -330,6 +346,43 @@ mod tests {
         assert_eq!(10, trade.qty);
         assert_eq!(1, trade.buy_owner);
         assert_eq!(3, trade.sell_owner);
+     }
+
+     #[test]
+     fn test_multiple_trades() {
+        let mut engine = LitEngine::new(1);
+
+        // Place some orders
+        engine.create_order(10.0, 10, OrderSide::Buy, 1, OrderType::Limit);        
+        engine.create_order(10.0, 1000, OrderSide::Buy, 2, OrderType::Limit);        
+        engine.create_order(11.0, 100, OrderSide::Sell , 6, OrderType::Limit);
+
+        // Now cross spread - priced lower than best bid
+        let (_id, trades) = engine.create_order(10.0, 50, OrderSide::Sell, 3, OrderType::Limit);
+
+        // Should fill at best bid price.
+        assert!(trades.is_some());
+        let trades = trades.unwrap();
+
+        assert_eq!(2, trades.len());
+
+        // First trade
+        let mut trade = &trades[0];
+
+        assert_eq!(10.0, trade.price);
+        assert_eq!(10, trade.qty);
+        assert_eq!(1, trade.buy_owner);
+        assert_eq!(3, trade.sell_owner);
+
+        // Second trade
+        trade = &trades[1];
+
+        assert_eq!(10.0, trade.price);
+        assert_eq!(40, trade.qty);
+        assert_eq!(2, trade.buy_owner);
+        assert_eq!(3, trade.sell_owner);
+
+
      }
 
 
