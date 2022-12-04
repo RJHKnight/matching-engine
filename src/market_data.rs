@@ -29,10 +29,17 @@ pub struct L2QuoteDelta {
 }
 
 pub struct AuctionData {
-    
+
     pub match_price: f32,
     pub match_quantity: u32,
     pub imbalance: i32,
+}
+
+pub struct Trade {
+
+    pub price: f32,
+    pub quantity: u32,
+    pub flags: u8,
 }
 
 
